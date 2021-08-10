@@ -1,0 +1,411 @@
+@Library(['eire-pipeline-global-utilities']) _
+ 
+
+JENKINS_USER = "srvpwiredev"
+JENKINS_NODE_LABEL = "RE_UBUNTU_DEV"
+ 
+pipeline {
+    agent {
+        label "${JENKINS_NODE_LABEL}"
+    }
+    stages {
+        stage("Setup Pipeline Env") {
+            steps {
+                script {
+                    // Email build result to the following CC list, semicolon separate
+                    // example: EMAIL_CC_LIST = "sai@google.com"
+                    env.EMAIL_CC_LIST = " "
+                    env.APP_ID = "APPPPPPP"
+                    env.APP_NAME = "dummy-maven"
+ 
+                    // Source Code
+                    env.GIT_SSH_CLONE_URL = "ssh://git@itec-stash.---.com/APPPPPPP/APPPPPPP-dumy-project-for-pipeline.git"
+                    env.GIT_BUILD_BRANCH = "develop"
+ 
+                    // Build Version
+                    env.MAJOR_MINOR_VERSION = "1.0.303"
+                    env.BUILD_VERSION = utility.setBuildVersion(env.MAJOR_MINOR_VERSION, env.GIT_BUILD_BRANCH)
+ 
+                    // Execute Maven compile
+                    env.MVN_POM = "dummy/pom.xml"
+                    env.MVN_OPTIONS = "clean install"
+                    env.MVN_DEPLOY_JAR = "true"
+                     
+                    // Execute Sonar for code quality and quality gate analysis
+                    env.EXECUTE_SONAR = "true"
+                    env.EXECUTE_SONAR_QUALITY_GATE = "true"
+                    env.SONARQUBE_ENV_NAME = "sonar_prod_with_token"
+                    env.SONAR_MVN_OPTIONS = "sonar:sonar -P sonar-java"
+ 
+                    // Execute OWASP for dependency vulnerability check
+                    // If set to true and build fails, please READ the doc on steps to fix - https://jeremylong.github.io/DependencyCheck/dependency-check-maven/configuration.html
+                    env.EXECUTE_OWASP_CHECK = "false"
+                    env.OWASP_FAIL_ON_CVSS_VALUE = "30" // 11 is the default value
+ 
+                    // Upload Artifact(s) to Artifactory Maven Repo
+                    env.EXECUTE_ARTIFACTORY_UPLOAD = "true"
+                    env.ARTIFACTORY_UPLOAD_PATTERN = "dummy/target/dummy-*.jar"
+                    env.ARTIFACTORY_UPLOAD_PATH = "maven-prereleases-local/com/---/" + "APPPPPPP/dummy-pipeline/${env.BUILD_VERSION}/"
+ 
+                    // Execute Docker build and push
+                    env.EXECUTE_DOCKER_BUILD_PUSH = "true"
+                    env.DOCKER_IMAGE_NAME = "----${env.APP_ID}/dummy-pipeline".toLowerCase()
+                    env.DOCKER_IMAGE_TAG = "${env.BUILD_VERSION}"
+                    env.DOCKERFILE_PATH = "dummy/"
+ 
+                    // Execute Git tagging
+                    env.EXECUTE_GIT_TAGGING = "true"
+                    env.GIT_TAG_NAME = "${env.BUILD_VERSION}"
+ 
+                    /* Execute Veracode for code security scan
+                       Check https://confluence.---.com/x/6hReDw for more details on Veracode Scan*/
+                    env.EXECUTE_VERACODE_SCAN = "false"
+                    env.VERACODE_APPLICATION_NAME = "WIY eire-build-automation APPPPPPP"
+                    env.VERACODE_SANDBOX_NAME = "Release Assessment Sandbox"
+                    env.VERACODE_SCAN_NAME = "APPPPPPP Static Scan ${env.BUILD_VERSION}"
+                    env.VERACODE_CRITICALITY = "Medium"
+                    env.VERACODE_UPLOAD_INCLUDE_PATTERN = "dummy/target/dummy-*.jar"
+                    env.VERACODE_UPLOAD_EXCLUDE_PATTERN = ""
+                    env.VERACODE_SCAN_INCLUDE_PATTERN = "*.jar"
+                    env.VERACODE_SCAN_EXCLUDE_PATTERN = ""
+                      // Artifact and Image details in Artifactory to set veracode properties
+                    env.VERACODE_MAVEN_ARTIFACTORY_REPOSITORY = "maven-prereleases-local"
+                    env.VERACODE_MAVEN_ARTIFACT_PATH = "com/---/${env.APP_ID}/dummy/${env.BUILD_VERSION}/dummy-${env.BUILD_VERSION}.jar"
+                    env.VERACODE_DOCKER_ARTIFACTORY_REPOSITORY = "docker-prereleases-local"
+                    env.VERACODE_DOCKER_ARTIFACT_PATH = "${env.DOCKER_IMAGE_NAME}/${env.DOCKER_IMAGE_TAG}"
+ 
+                    /* Execute Automated Governance Gates
+                       Check https://confluence.---.com/x/ZqioGw for more details on Governance Gates*/
+                    env.EXECUTE_GOVERNANCE_GATE = "false"
+                    env.GOVERNANCE_ESG_OAUTH_ENDPOINT = "esg-oauth2-internal.---.com/as/resourceOwner"
+                    env.GOVERNANCE_ESG_OAUTH_CREDENTIALS_ID = "------------------------"
+                    env.GOVERNANCE_ENDPOINT = "pipeline.---.com/governance"
+                    env.GOVERNANCE_ARTIFACTORY_REPOSITORY = "maven-prereleases-local"
+                    env.GOVERNANCE_ARTIFACTORY_PATH = "com/---/${env.APP_ID}/dummy/${env.BUILD_VERSION}/dummy-${env.BUILD_VERSION}.jar"
+                    env.GOVERNANCE_APPLICATION_NUMBER = "APPPPPPP"
+                    env.GOVERNANCE_CLOUD_TARGET = "AMAZON WEB SERVICES"
+                      // Acceptable Values: AMAZON WEB SERVICES, FIDCLOUD, MICROSOFT AZURE, NATIVE HYBRID CLOUD, ----- STRATUS CLOUD CONTAINER PLATFORM (SCCP), ----- ON-PREMISE
+                    env.GOVERNANCE_FAIL_ON_NON_COMPLIANT = "true"
+ 
+                    currentBuild.displayName = "${env.BUILD_VERSION}"
+                    currentBuild.description = "${env.GIT_BUILD_BRANCH}"
+                    // Set Client Master Default envrionment variables
+                    setClientMasterDefaultVariableInEnv()
+ 
+                    rtServer (
+                        id: "----artifactory",
+                        url: "https://artifactory.---.com",
+                        credentialsId: "${env.ARTIFACTORY_CREDENTIALS_ID}"
+                    )
+                    rtMavenDeployer (
+                        id: "MAVEN_DEPLOYER",
+                        serverId: "----artifactory",
+                        deployArtifacts: "${env.MVN_DEPLOY_JAR}",
+                        releaseRepo: "maven-prereleases-local",
+                        snapshotRepo: "maven-prereleases-local"
+                    )
+                    rtMavenResolver (
+                        id: "MAVEN_RESOLVER",
+                        serverId: "----artifactory",
+                        releaseRepo: "maven-prereleases",
+                        snapshotRepo: "maven-prereleases"
+                    )
+                    // Artifactory closure to capture "build-info".  This is a best practice for audit and traceability.
+                    // NOTE: "maxBuilds" and "deleteBuildArtifacts" show how artifacts can be deleted in Artifactory
+                    // fully controlled by your job.
+                    rtBuildInfo (
+                        captureEnv: true,
+                        excludeEnvPatterns: ["*private*", "internal-*"],
+                        maxBuilds: 90,
+                        maxDays: 180,
+                        // Optional - delete the build artifacts when deleting a build.
+                        deleteBuildArtifacts: false
+                    )
+                }
+            }
+        }
+ 
+        stage("Checkout Source Code") {
+            steps {
+                deleteDir()
+                script {
+                    def scmVars = checkout (
+                        changelog: true, poll: true,
+                        scm: [
+                            $class: 'GitSCM',
+                            branches: [[name: "${env.GIT_BUILD_BRANCH}"]],
+                            doGenerateSubmoduleConfigurations: false, gitTool: 'Default', submoduleCfg: [],
+                            userRemoteConfigs: [[credentialsId: "${env.GIT_CREDENTIAL_ID}", url: "${env.GIT_SSH_CLONE_URL}"]]
+                        ]
+                    )
+                    env.CAPTURE_GIT_SHA = scmVars.GIT_COMMIT
+                    echo "${env.CAPTURE_GIT_SHA}"
+                }
+            }
+        }
+ 
+        stage("Maven Build") {
+            agent {
+                docker {
+                    image "fcr.---.com/maven:3.6-jdk-8"
+                    args  "-v /home/${JENKINS_USER}:/home/${JENKINS_USER} -v /etc/passwd:/etc/passwd -v /bld/${JENKINS_USER}:/bld/${JENKINS_USER} --entrypoint=''"
+                    reuseNode true
+                }
+            }
+            environment {
+                MAVEN_HOME = "/usr/share/maven"
+            }
+            steps {
+                rtMavenRun (
+                    pom: "${env.MVN_POM}",
+                    goals: "versions:set -DnewVersion=${env.BUILD_VERSION}",
+                    resolverId: "MAVEN_RESOLVER"
+                )
+                rtMavenRun (
+                    pom: "${env.MVN_POM}",
+                    goals: "${env.MVN_OPTIONS}",
+                    deployerId: "MAVEN_DEPLOYER",
+                    resolverId: "MAVEN_RESOLVER"
+                )
+                rtPublishBuildInfo (
+                    serverId: "----artifactory"
+                )
+            }
+        }
+ 
+        stage("Sonar Scan") {
+            when {
+                expression {
+                    EXECUTE_SONAR == "true"
+                }
+            }
+            environment {
+                MAVEN_HOME = "/usr/share/maven"
+            }
+            agent {
+                docker {
+                    image "fcr.---.com/maven:3.6-jdk-8"
+                    args  "-v /home/${JENKINS_USER}:/home/${JENKINS_USER} -v /etc/passwd:/etc/passwd -v /bld/${JENKINS_USER}:/bld/${JENKINS_USER} --entrypoint=''"
+                    reuseNode true
+                }
+            }
+            steps {
+                withSonarQubeEnv(env.SONARQUBE_ENV_NAME) {
+                    rtMavenRun (
+                        pom: "${env.MVN_POM}",
+                        goals: "${env.SONAR_MVN_OPTIONS}",
+                        deployerId: "MAVEN_DEPLOYER",
+                        resolverId: "MAVEN_RESOLVER"
+                    )
+                }
+            }
+        }
+ 
+        stage("Sonar Quality Gate") {
+            when {
+                expression {
+                    EXECUTE_SONAR_QUALITY_GATE == "true"
+                }
+            }
+            steps {
+                timeout(time: 10, unit: 'MINUTES') {
+                    script {
+                        def qg = waitForQualityGate()
+                        if (qg.status != 'OK' && qg.status != 'WARN') {
+                            error "Pipeline aborted due to quality gate failure: ${qg.status}"
+                        }
+                    }
+                }
+            }
+        }
+ 
+        stage("OWASP Scan") {
+            agent {
+                docker {
+                    image "fcr.---.com/----APPPPPPP/util-releng:1.0"
+                    args  "-v /home/${JENKINS_USER}:/home/${JENKINS_USER} -v /etc/passwd:/etc/passwd -v /bld/${JENKINS_USER}:/bld/${JENKINS_USER} --entrypoint=''"
+                    reuseNode true
+                }
+            }
+            when {
+                expression {
+                    EXECUTE_OWASP_CHECK == "true"
+                }
+            }
+            steps {
+                sh("""/dependency-check/bin/dependency-check.sh --project ${env.APP_NAME} --scan ./ --data ./ -o ./reports --failOnCVSS ${env.OWASP_FAIL_ON_CVSS_VALUE} --disableRetireJS --proxyserver http.proxy.---.com  --proxyport 8000""")
+                publishHTML([allowMissing: false, alwaysLinkToLastBuild: false, keepAll: false, reportDir: "./reports", reportFiles: "dependency-check-report.html", reportName: "dependency-check-report.html", reportTitles: ""])                    
+            }
+        }
+ 
+        stage("Upload Artifact") {
+            when {
+                expression {
+                    EXECUTE_ARTIFACTORY_UPLOAD == "true"
+                }
+            }
+            steps {
+                script {
+                    utility.validateArtifact("", "${env.ARTIFACTORY_UPLOAD_PATH}")
+                }
+                rtUpload (
+                    serverId: "----artifactory",
+                    spec:
+                        """{
+                            "files": [
+                                {
+                                    "pattern": "${env.ARTIFACTORY_UPLOAD_PATTERN}",
+                                    "target": "${env.ARTIFACTORY_UPLOAD_PATH}"
+                                }
+                            ]
+                        }"""
+                )
+                rtPublishBuildInfo (
+                    serverId: "----artifactory"
+                )
+            }
+        }
+         
+        stage("Build & Push Docker Image") {
+            when {
+                expression {
+                    EXECUTE_DOCKER_BUILD_PUSH == "true"
+                }
+            }
+            steps {
+                script {
+                    docker.withRegistry(env.ARTIFACTORY_REGISTY_URL, env.ARTIFACTORY_CREDENTIALS_ID) {
+                        utility.validateArtifact("docker-prereleases", "${env.DOCKER_IMAGE_NAME}/${env.DOCKER_IMAGE_TAG}")
+                        def tagPrefix = "com.---." + "${env.APP_ID}".toLowerCase() + "." + "${env.DOCKER_IMAGE_NAME}".split("/")[1..-1].join(".")
+                        def labelCmd = "--label ${tagPrefix}.applicationid=${env.APP_ID} " +
+                                       "--label ${tagPrefix}.createdby=${JENKINS_USER} " +
+                                       "--label ${tagPrefix}.scmurl=${env.GIT_SSH_CLONE_URL} " +
+                                       "--label ${tagPrefix}.scmcommit=${env.CAPTURE_GIT_SHA} " +
+                                       "--label ${tagPrefix}.jenkinsurl=${BUILD_URL} "
+                        appsImage = docker.build(env.DOCKER_IMAGE_NAME, "${labelCmd} ${env.DOCKERFILE_PATH}")
+                        env.appsImageTag = appsImage.tag(env.DOCKER_IMAGE_TAG)
+                    }
+                }
+                rtDockerPush (
+                    serverId: "----artifactory",
+                    image: "${env.appsImageTag}",
+                    targetRepo: "docker-prereleases-local"
+                )
+                rtPublishBuildInfo (
+                    serverId: "----artifactory"
+                )
+            }
+        }
+ 
+        stage("Git Tagging") {
+            when {
+                expression {
+                    EXECUTE_GIT_TAGGING == "true"
+                }
+            }
+            steps {
+                sh("""
+                    git tag ${env.GIT_TAG_NAME}
+                    git push origin ${env.GIT_TAG_NAME}
+                """)
+            }
+        }
+ 
+        stage("Veracode Static Scan") {
+            agent {
+                docker {
+                    image "fcr.---.com/----APPPPPPP/veracodeapi:1.0"
+                    args  "-v /home/${JENKINS_USER}:/home/${JENKINS_USER} -v /etc/passwd:/etc/passwd -v /bld/${JENKINS_USER}:/bld/${JENKINS_USER} --entrypoint=''"
+                    reuseNode true
+                }
+            }
+            when {
+                expression {
+                    EXECUTE_VERACODE_SCAN == "true"
+                }
+            }
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'VeracodeGlobalUser',
+                                passwordVariable: 'VERACODE_PASS', usernameVariable: 'VERACODE_USER')]) {
+                    veracode (
+                        useProxy: true, pHost: "http.proxy.---.com", pPort: "8000",
+                        useIDkey: true, vuser:"", vpassword: "",
+                        canFailJob: true, createSandbox: false,
+                        copyRemoteFiles: true,
+                        vkey: "${env.VERACODE_PASS}", vid:"${env.VERACODE_USER}",
+                        criticality: "${env.VERACODE_CRITICALITY}", debug: true,
+                        applicationName: "${env.VERACODE_APPLICATION_NAME}",
+                        sandboxName: "${env.VERACODE_SANDBOX_NAME}",
+                        scanName: "${env.VERACODE_SCAN_NAME}",
+                        fileNamePattern: "",
+                        replacementPattern: "",
+                        uploadIncludesPattern: "${env.VERACODE_UPLOAD_INCLUDE_PATTERN}",
+                        uploadExcludesPattern: "${env.VERACODE_UPLOAD_EXCLUDE_PATTERN}",
+                        scanIncludesPattern: "${env.VERACODE_SCAN_INCLUDE_PATTERN}",
+                        scanExcludesPattern: "${env.VERACODE_SCAN_EXCLUDE_PATTERN}"
+                    )
+                }
+                script {
+                    env.veracode_app_id = veracodeUtility.getAppId("${env.VERACODE_APPLICATION_NAME}")
+                    env.veracode_sandbox_id = veracodeUtility.getSandboxId("${env.veracode_app_id}", "${env.VERACODE_SANDBOX_NAME}")
+                    env.veracode_build_id = veracodeUtility.getBuildId("${env.veracode_app_id}", "${env.veracode_sandbox_id}", "${env.VERACODE_SCAN_NAME}")
+                    env.VERACODE_PROPERTIES = "veracode_app_id=${env.veracode_app_id};veracode_sandbox_id=${env.veracode_sandbox_id};veracode_build_id=${env.veracode_build_id}"
+ 
+                    if("${env.MVN_DEPLOY_JAR}" == "true" || "${env.EXECUTE_ARTIFACTORY_UPLOAD}" == "true") {
+                        SET_MAVEN_VERACODE_PROPERTY =  utility.setArtifactoryProperties("${env.VERACODE_MAVEN_ARTIFACTORY_REPOSITORY}", "${env.VERACODE_MAVEN_ARTIFACT_PATH}", "${env.VERACODE_PROPERTIES}")
+                    }
+                    if("${env.EXECUTE_DOCKER_BUILD_PUSH}" == "true") {
+                        SET_DOCKER_VERACODE_PROPERTY =  utility.setArtifactoryProperties("${env.VERACODE_DOCKER_ARTIFACTORY_REPOSITORY}", "${env.VERACODE_DOCKER_ARTIFACT_PATH}", "${env.VERACODE_PROPERTIES}")
+                    }
+                }
+            }
+        }
+ 
+        stage("Automated Governance Gates") {
+            agent {
+                docker {
+                    image "fcr.---.com/----ap119867/governance-python3:1.0.5"
+                    args  "-v /home/${JENKINS_USER}:/home/${JENKINS_USER} -v /etc/passwd:/etc/passwd -v /bld/${JENKINS_USER}:/bld/${JENKINS_USER} --entrypoint=''"
+                    reuseNode true
+                }
+            }
+            when {
+                expression {
+                    EXECUTE_GOVERNANCE_GATE == "true"
+                }
+            }
+            steps {
+                withCredentials([usernamePassword(credentialsId: env.GOVERNANCE_ESG_OAUTH_CREDENTIALS_ID, passwordVariable: 'ESG_PASSWORD', usernameVariable: 'ESG_USER')]) {
+                    sh("""
+                        python -m governance.governance \
+                        --esg_oauth_endpoint '${env.GOVERNANCE_ESG_OAUTH_ENDPOINT}' \
+                        --esg_oauth_username '${ESG_USER}' \
+                        --esg_oauth_password '${ESG_PASSWORD}' \
+                        --governance_endpoint '${env.GOVERNANCE_ENDPOINT}' \
+                        --artifactory_repository '${env.GOVERNANCE_ARTIFACTORY_REPOSITORY}' \
+                        --artifactory_path '${env.GOVERNANCE_ARTIFACTORY_PATH}' \
+                        --application_number '${env.GOVERNANCE_APPLICATION_NUMBER}' \
+                        --cloud_target '${env.GOVERNANCE_CLOUD_TARGET}' \
+                        --fail_on_non_compliant '${env.GOVERNANCE_FAIL_ON_NON_COMPLIANT}'
+                    """)
+                }
+            }
+        }
+    }
+ 
+    post {
+        always {
+            script {
+                currentBuild.result = currentBuild.result ?: 'SUCCESS'
+                notifyBitbucket(commitSha1: "${env.CAPTURE_GIT_SHA}")
+            }
+            emailext (
+                recipientProviders: [[$class: 'RequesterRecipientProvider']],
+                subject: "Jenkins Build ${currentBuild.currentResult}: Job ${env.JOB_BASE_NAME}",
+                to: "${env.EMAIL_CC_LIST}",
+                mimeType: "text/html",
+                body: utility.getEmailTemplate()
+            )
+        }
+    }
+}
