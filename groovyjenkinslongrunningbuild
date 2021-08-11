@@ -1,0 +1,104 @@
+// Script to check builds running for longer period of time.
+// Specify max hour time value using variable 'maxhourlimit', to specify long run time.
+
+import jenkins.*;
+import jenkins.model.*;
+import hudson.*;
+import hudson.model.*;
+
+import java.text.DateFormat
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.Date;
+
+def cal = Calendar.instance
+Date todayDate = cal.getTime()
+println todayDate
+
+Date latesttimestamp = new Date();
+def latesttimestampmillisec = latesttimestamp.getTime()
+def oldtimestampmillisec = ((latesttimestamp - 5).getTime())
+
+println oldtimestampmillisec 
+
+def maxhourlimit = 7 //set the value which will be considered as limit to max time of build run to consider it as long run
+
+def JenkinsMaster = "cm301"
+def JenkinsUrl = "https://itec-jenkins.---.com/"+JenkinsMaster+"/"
+
+//Function to write to Workspace
+def writeToWorkspace(Object build, String toWrite, String fileName) {
+  if(build.workspace.isRemote())
+  {
+    channel = build.workspace.channel;
+    fp = new FilePath(channel, build.workspace.toString() + "/"+filename)
+    } else {
+    fp = new FilePath(new File(build.workspace.toString() + "/"+filename))
+    }
+  
+  if(fp != null)
+  {
+    fp.write(toWrite, null); //writing to file
+    }
+}
+
+tempStr = new StringBuffer()
+tempStr.append("\n")
+tempStr.append("Check https://confluence.---.com/x/ux-VEw for more information on long run build")
+tempStr.append("\n")
+tempStr.append("\n")
+tempStr.append("Long Running Builds:")
+
+def jobs = Jenkins.instance.getJobNames()
+for (job in jobs) {
+  try{
+      if(true){
+          // Get job full name
+          jobInstance = Jenkins.instance.getItemByFullName(job)
+           // println jobInstance
+          // Get builds run from past 2 or 3 days to current
+          jobbuilds =  jobInstance.getBuilds().byTimestamp( oldtimestampmillisec , latesttimestampmillisec )
+          for(abuild in jobbuilds){
+              // println abuild.getUrl()
+              if(abuild.isInProgress() == true){  //Check if build is in progress
+                  println JenkinsUrl+abuild.getUrl()
+                  abuildstarttime = new Date( abuild.getStartTimeInMillis() )  //get build start time
+                  use(groovy.time.TimeCategory) {
+                      timediff = (todayDate - abuildstarttime)  //get time diff b/w today and build start time
+                      if(timediff.days > 0){
+                          tempStr.append("\n")
+                          tempStr.append(JenkinsUrl+abuild.getUrl())
+                          toWrite = tempStr.toString()
+                          filename = JenkinsMaster+'LongRunningBuilds.txt'
+                          writeToWorkspace(build, toWrite, filename)
+                          println("\n timediff greater than zero *****")
+                          println JenkinsUrl+abuild.getUrl()
+                      }else if((timediff.days == 0) && (timediff.hours >= maxhourlimit)){
+                          tempStr.append("\n")
+                          tempStr.append(JenkinsUrl+abuild.getUrl())
+                          toWrite = tempStr.toString()
+                          filename = JenkinsMaster+'LongRunningBuilds.txt'
+                          writeToWorkspace(build, toWrite, filename)
+                          println("\n Exceeds maxhourlimit *****")
+                          println JenkinsUrl+abuild.getUrl()
+                      }
+                    }
+                }
+            }
+        }
+    }catch(Exception e){
+        println("\n Exception in executing Long Run Module")
+        println(e)
+    }
+}
+
+
+
+========================================shell script=========================
+cd ${WORKSPACE}
+if [ -f *LongRunningBuilds.txt ]
+then
+	echo "Long Running Builds Report Available"
+else
+	echo "no builds running for more than specified time"
+fi
