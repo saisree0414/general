@@ -112,3 +112,86 @@ def enable_webhook(project_key, repo_slug, payload):
 
 if __name__ == "__main__":
     main()
+    
+    
+    
+    
+    =========================jenkinsfile============================================
+
+pipeline {
+    agent {
+        label "RE_UBUNTU_DEV"
+    }
+	environment {
+         // Email build result to the following CC list
+        EMAIL_CC_LIST = " "
+        GIT_CREDENTIAL_ID = "8bfdc32d-1d4d-4bf9-9c8e-64c9767fb206"
+       
+        STASH_CREDENTIAL_ID = "7dee8f62-7fe1-4f91-8fea-eaaad4b7533e"
+        GIT_SSH_CLONE_URL = "ssh://git@itec-stash.---.com/appppppp/apppppppp-release-engineer-utility.git"
+        GIT_BUILD_BRANCH = "feature/EIRS-224-python-stash-webhook"
+	}
+	stages {
+        stage("Checkout Source Code") {
+            steps {
+                deleteDir()
+                checkout (
+                    changelog: true, poll: true, 
+                    scm: [
+                        $class: 'GitSCM', 
+                        branches: [[name: "${env.GIT_BUILD_BRANCH}"]], 
+                        doGenerateSubmoduleConfigurations: false, gitTool: 'Default', submoduleCfg: [], 
+                        userRemoteConfigs: [[credentialsId: "${env.GIT_CREDENTIAL_ID}", url: "${env.GIT_SSH_CLONE_URL}"]]
+                    ]
+                )
+            }
+        }
+    	stage("Run Python Script") {
+            agent {
+                docker {
+                    image "docker.---.com/----ap107712/python:3.6.8"
+                    args  "-v /home/srvpwiredev:/home/srvpwiredev -v /etc/passwd:/etc/passwd -v /bld/srvpwiredev:/bld/srvpwiredev --entrypoint=''"
+                    reuseNode true
+                }
+            }
+			steps {
+                withCredentials([usernamePassword(credentialsId: "${env.STASH_CREDENTIAL_ID}", passwordVariable: 'PASSWORD', usernameVariable: 'USERNAME')]) {
+                    sh ("""
+                        python python/stash/enable_webhook.py --help; 
+                        echo "Enabled Stash Jenkins webhook"
+                        python python/stash/enable_webhook.py -p ${project} -r ${repo} -j ${jenkinsBase} \
+                            -e ${jenkinsEndPointType} -o ${branchOptions} -b ${branchOptionsBranches}
+                    """)
+                }
+			}
+		}    
+    }
+
+	post {
+        always {
+			emailext (
+                recipientProviders: [[$class: 'RequesterRecipientProvider']],
+                subject: "Jenkins Build ${currentBuild.currentResult}: Job ${env.JOB_NAME}",
+				to: "",
+                body: 
+                    """ Pipeline result:
+                        Status: ${currentBuild.currentResult} 
+                        Job:    ${env.JOB_NAME}
+                        build:  ${env.BUILD_NUMBER}
+                        url:    ${env.BUILD_URL}
+                    """
+            )
+        }
+    }
+}
+
+
+
+
+
+===================reuirement.txt====================	
+certifi==2019.6.16
+chardet==3.0.4
+idna==2.8
+requests==2.22.0
+urllib3==1.25.3
